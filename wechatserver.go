@@ -1,226 +1,211 @@
 package main
 
 import (
-	//"encoding/json"
-	"github.com/gin-gonic/gin"
-	"github.com/jinzhu/gorm"
-	//"net/http"
+	"crypto/sha1"
+	"encoding/xml"
 	"fmt"
-	//	"math/rand"
-	//"net/url"
-	//	"io"
-	"os"
-	//"io/ioutil"
-	//	"path/filepath"
-	//	"strconv"
+	"io"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"sort"
+	"strings"
 	"time"
-
-	//"github.com/bitly/go-simplejson"
-	_ "github.com/go-sql-driver/mysql"
-	//"encoding/json"
-	//"./MyDBStructs"
-	"github.com/itsjamie/gin-cors"
-	//	"github.com/virushuo/Go-Apns"
 )
 
 const (
-	RootResDir = "./res/"
-	WebResDir  = "/res"
-
-	TimeFormat = "2006-01-02 15:04:05"
+	TOKEN    = "gostock"
+	Text     = "text"
+	Location = "location"
+	Image    = "image"
+	Link     = "link"
+	Event    = "event"
+	Music    = "music"
+	News     = "news"
 )
 
-var gDB *gorm.DB
-var gRelease bool = true
-var gLocal bool = false
-
-// **********************************************************************************************************************
-// **********************************************************************************************************************
-//
-//			Database Structures
-//
-// **********************************************************************************************************************
-// **********************************************************************************************************************
-/*
-type UserView struct {
-	LoginName string `gorm:"column:LoginName"`
-	FirstName string `gorm:"column:FirstName"`
-	LastName  string `gorm:"column:LastName"`
-	Icon      string `gorm:"column:Icon"`
-	Score     int    `gorm:"column:Score"`
-	//	Authority	int		`gorm:"column:Authority"`
-	DemoJamId1   int   `gorm:"column:DemoJamId1"`
-	DemoJamId2   int   `gorm:"column:DemoJamId2"`
-	VoiceVoteId1 int   `gorm:"column:VoiceVoteId1"`
-	VoiceVoteId2 int   `gorm:"column:VoiceVoteId2"`
-	EggVoted     bool  `gorm:"column:EggVoted"`
-	GreenAmb     bool  `gorm:"column:GreenAmb"`
-	SubTime      int64 `gorm:"column:SubTime"`
-}
-*/
-// **********************************************************************************************************************
-// **********************************************************************************************************************
-//
-//			router's selection logic function
-//
-// **********************************************************************************************************************
-// **********************************************************************************************************************
-func MainGetRouter(c *gin.Context) {
-	MyPrint("http message start!")
-	c.Request.ParseForm()
-	MyPrint("Request : ", c.Request.Form)
-	checkWeChat(c)
-	MyPrint("http message finished!")
+type msgBase struct {
+	ToUserName   string
+	FromUserName string
+	CreateTime   time.Duration
+	MsgType      string
+	Content      string
 }
 
-// **********************************************************************************************************************
-// **********************************************************************************************************************
-//
-//			Get Function
-//
-// **********************************************************************************************************************
-// **********************************************************************************************************************
-func checkWeChat(c *gin.Context) {
-	echostring := c.Query("echostr")
-	//js, err := simplejson.NewJson([]byte(`{}`))
-	//CheckErr(err)
-	//js.Set("echostr", echostring)
-	//c.JSON(200, js)
-	c.Writer.WriteString(echostring)
+type Request struct {
+	XMLName                xml.Name `xml:"xml"`
+	msgBase                         // base struct
+	Location_X, Location_Y float32
+	Scale                  int
+	Label                  string
+	PicUrl                 string
+	MsgId                  int
 }
 
-// **********************************************************************************************************************
-// **********************************************************************************************************************
-//
-//			main function
-//
-// **********************************************************************************************************************
-// **********************************************************************************************************************
-func main() {
-	argCnt := len(os.Args)
+type Response struct {
+	XMLName xml.Name `xml:"xml"`
+	msgBase
+	ArticleCount int     `xml:",omitempty"`
+	Articles     []*item `xml:"Articles>item,omitempty"`
+	FuncFlag     int
+}
 
-	for i := 1; i < argCnt; i++ {
-		if os.Args[i] == "debug" {
-			gRelease = false
-		} else if os.Args[i] == "local" {
-			gLocal = true
+type item struct {
+	XMLName     xml.Name `xml:"item"`
+	Title       string
+	Description string
+	PicUrl      string
+	Url         string
+}
+
+func weixinEvent(w http.ResponseWriter, r *http.Request) {
+	if weixinCheckSignature(w, r) == false {
+		fmt.Println("auth failed, attached?")
+		return
+	}
+
+	fmt.Println("auth success, parse POST")
+
+	defer r.Body.Close()
+
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+
+	fmt.Println(string(body))
+	var wreq *Request
+	if wreq, err = DecodeRequest(body); err != nil {
+		log.Fatal(err)
+		return
+	}
+
+	wresp, err := dealwith(wreq)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+
+	data, err := wresp.Encode()
+	if err != nil {
+		fmt.Printf("error:%v\n", err)
+		return
+	}
+
+	fmt.Println(string(data))
+	fmt.Fprintf(w, string(data))
+	return
+}
+
+func dealwith(req *Request) (resp *Response, err error) {
+	resp = NewResponse()
+	resp.ToUserName = req.FromUserName
+	resp.FromUserName = req.ToUserName
+	resp.MsgType = Text
+
+	if req.MsgType == Event {
+		if req.Content == "subscribe" {
+			resp.Content = "欢迎关注微信公众号 dreamcastleshanghai, 上海梦堡信息科技有限公司。"
+			return resp, nil
 		}
 	}
 
-	fmt.Println("Release Mode : ", gRelease)
+	if req.MsgType == Text {
+		if strings.Trim(strings.ToLower(req.Content), " ") == "help" {
+			resp.Content = "欢迎关注微信公众号 dreamcastleshanghai, 上海梦堡信息科技有限公司。"
+			return resp, nil
+		}
+		resp.Content = "将尽快回复您."
+	} else if req.MsgType == Image {
 
-	if gRelease {
-		gin.SetMode(gin.ReleaseMode)
-	}
+		var a item
+		a.Description = "description"
+		a.Title = "title"
+		a.PicUrl = "http://news.07073.com/uploads/090929/9_132710_1_lit.jpg"
+		a.Url = "http://news.07073.com/pingce/320407.html"
 
-	//	gDB = ConnectDB(gRelease)
-
-	//TestFunc()
-
-	MyPrint("start server!")
-
-	//router := gin.Default()
-
-	router := gin.New()
-
-	//authorized := router.Group("/")
-	router.Use(cors.Middleware((cors.Config{
-		Origins:         "*",
-		Methods:         "GET, PUT, POST, DELETE",
-		RequestHeaders:  "Origin, Authorization, Content-Type",
-		ExposedHeaders:  "",
-		MaxAge:          50 * time.Second,
-		Credentials:     true,
-		ValidateHeaders: false,
-	})))
-
-	router.GET("", MainGetRouter)
-	//	router.POST("", RouterPost)
-
-	//	router.Static(WebResDir, RootResDir)
-	//	router.StaticFile(WebVersionResDir, VersionResDir)
-
-	//	router.Static(WebDemoJamResDir, DemoJamResDir)
-	//	router.Static(WebSapVoiceResDir, SapVoiceResDir)
-	//	router.Static(WebEggHikingResDir, EggHikingResDir)
-	//	router.Static(WebLuckdrawResDir, LuckdrawResDir)
-	//	router.Static(WebGuideResDir, GuideResDir)
-
-	router.Run(":80")
-
-	//gDB.Close()
-}
-
-// **********************************************************************************************************************
-// **********************************************************************************************************************
-//
-//			common function
-//
-// **********************************************************************************************************************
-// **********************************************************************************************************************
-func MyPrint(a ...interface{}) {
-	if gRelease {
-		return
+		resp.MsgType = News
+		resp.ArticleCount = 1
+		resp.Articles = append(resp.Articles, &a)
+		resp.FuncFlag = 1
 	} else {
-		fmt.Println(a)
+		resp.Content = "暂时还不支持其他的类型"
+	}
+	return resp, nil
+}
+
+func weixinAuth(w http.ResponseWriter, r *http.Request) {
+	if weixinCheckSignature(w, r) == true {
+		var echostr string = strings.Join(r.Form["echostr"], "")
+		fmt.Fprintf(w, echostr)
 	}
 }
 
-func CheckErr(err error) bool {
+func weixinHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		fmt.Println("GET begin...")
+		weixinAuth(w, r)
+		fmt.Println("GET END...")
+	} else {
+		fmt.Println("POST begin...")
+		weixinEvent(w, r)
+		fmt.Println("POST END...")
+	}
+}
+
+func main() {
+	http.HandleFunc("/check", weixinHandler)
+	//http.HandleFunc("/", action)
+	port := "80"
+	println("Listening on port ", port, "...")
+	err := http.ListenAndServe(":"+port, nil) //设置监听的端口
+
 	if err != nil {
-		panic(err)
+		log.Fatal("ListenAndServe: ", err)
+	}
+}
+
+func str2sha1(data string) string {
+	t := sha1.New()
+	io.WriteString(t, data)
+	return fmt.Sprintf("%x", t.Sum(nil))
+}
+
+func weixinCheckSignature(w http.ResponseWriter, r *http.Request) bool {
+	r.ParseForm()
+	fmt.Println(r.Form)
+
+	var signature string = strings.Join(r.Form["signature"], "")
+	var timestamp string = strings.Join(r.Form["timestamp"], "")
+	var nonce string = strings.Join(r.Form["nonce"], "")
+	tmps := []string{TOKEN, timestamp, nonce}
+	sort.Strings(tmps)
+	tmpStr := tmps[0] + tmps[1] + tmps[2]
+	tmp := str2sha1(tmpStr)
+	if tmp == signature {
 		return true
 	}
 	return false
 }
 
-func CheckFileIsExist(filename string) bool {
-	var exist = true
-	if _, err := os.Stat(filename); os.IsNotExist(err) {
-		exist = false
+func DecodeRequest(data []byte) (req *Request, err error) {
+	req = &Request{}
+	if err = xml.Unmarshal(data, req); err != nil {
+		return
 	}
-	return exist
+	req.CreateTime *= time.Second
+	return
 }
 
-func CheckDirIsExist(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil || os.IsExist(err)
+func NewResponse() (resp *Response) {
+	resp = &Response{}
+	resp.CreateTime = time.Duration(time.Now().Unix())
+	return
 }
 
-func ConnectDB(isRelease bool) *gorm.DB {
-	MyPrint("start to connecting db!")
-	var connectStr string
-	if gLocal {
-		connectStr = "root@tcp(127.0.0.1:3306)/dreamcastleshanghai?charset=utf8&parseTime=True"
-	} else {
-		connectStr = "root:1011@/dreamcastleshanghai?charset=utf8&parseTime=True"
-	}
-	db, err := gorm.Open("mysql", connectStr)
-	if CheckErr(err) {
-		return nil
-	}
-	MyPrint("start to connecting db finished!")
-
-	MyPrint("start to init db!")
-	db.DB()
-	db.DB().Ping()
-	db.DB().SetMaxIdleConns(10)
-	db.DB().SetMaxOpenConns(100)
-	if isRelease {
-		db.LogMode(false)
-	} else {
-		db.LogMode(true)
-	}
-	db.SingularTable(true)
-	//db.AutoMigrate(&User{}, &Tests{})
-	MyPrint("start to init db finished!")
-
-	return &db
-}
-
-func readError(errorChan <-chan error) {
-	for {
-		apnerror := <-errorChan
-		fmt.Println(apnerror.Error())
-	}
+func (resp Response) Encode() (data []byte, err error) {
+	resp.CreateTime = time.Duration(time.Now().Unix())
+	data, err = xml.Marshal(resp)
+	return
 }
