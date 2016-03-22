@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	TOKEN    = "gostock"
+	TOKEN    = "dreamcastleshanghai"
 	Text     = "text"
 	Location = "location"
 	Image    = "image"
@@ -137,9 +137,11 @@ func dealwith(req *Request) (resp *Response, err error) {
 
 func weixinAuth(w http.ResponseWriter, r *http.Request) {
 	if weixinCheckSignature(w, r) == true {
+		fmt.Println("auth check true.")
 		var echostr string = strings.Join(r.Form["echostr"], "")
 		fmt.Fprintf(w, echostr)
 	}
+	fmt.Println("auth check false.")
 }
 
 func weixinHandler(w http.ResponseWriter, r *http.Request) {
@@ -179,10 +181,23 @@ func weixinCheckSignature(w http.ResponseWriter, r *http.Request) bool {
 	var signature string = strings.Join(r.Form["signature"], "")
 	var timestamp string = strings.Join(r.Form["timestamp"], "")
 	var nonce string = strings.Join(r.Form["nonce"], "")
+
+	fmt.Println("signature : ", signature)
+	fmt.Println("timestamp : ", timestamp)
+	fmt.Println("nonce : ", nonce)
+
 	tmps := []string{TOKEN, timestamp, nonce}
+
+	fmt.Println(tmps)
 	sort.Strings(tmps)
+	fmt.Println(tmps)
+
 	tmpStr := tmps[0] + tmps[1] + tmps[2]
+	fmt.Println("tmpStr : ", tmpStr)
+
 	tmp := str2sha1(tmpStr)
+	fmt.Println("tmp : ", tmp)
+
 	if tmp == signature {
 		return true
 	}
