@@ -15,7 +15,7 @@ import (
 	//	"strconv"
 	"time"
 
-	//	"github.com/bitly/go-simplejson"
+	"github.com/bitly/go-simplejson"
 	_ "github.com/go-sql-driver/mysql"
 	//"encoding/json"
 	//"./MyDBStructs"
@@ -69,6 +69,7 @@ func MainGetRouter(c *gin.Context) {
 	MyPrint("http message start!")
 	c.Request.ParseForm()
 	MyPrint("Request : ", c.Request.Form)
+	checkWeChat(c)
 	MyPrint("http message finished!")
 }
 
@@ -79,6 +80,13 @@ func MainGetRouter(c *gin.Context) {
 //
 // **********************************************************************************************************************
 // **********************************************************************************************************************
+func checkWeChat(c *gin.Context) {
+	echostring := c.Query("echostr")
+	js, err := simplejson.NewJson([]byte(`{}`))
+	CheckErr(err)
+	js.Set("echostr", echostring)
+	c.JSON(200, js)
+}
 
 // **********************************************************************************************************************
 // **********************************************************************************************************************
